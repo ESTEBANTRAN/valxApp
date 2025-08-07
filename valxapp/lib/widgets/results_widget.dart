@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/checker_provider.dart';
 import '../models/account.dart';
-import '../utils/constants.dart';
 import '../utils/theme.dart';
 
 class ResultsWidget extends StatefulWidget {

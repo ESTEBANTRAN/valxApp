@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/checker_provider.dart';
-import '../utils/constants.dart';
 import '../utils/theme.dart';
 
 class CheckerControlsWidget extends StatelessWidget {

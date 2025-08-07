@@ -39,13 +39,13 @@ dependencies:
   permission_handler: ^11.1.0
   
   # Notificaciones
-  flutter_local_notifications: ^16.3.0
+  flutter_local_notifications: ^17.0.0
   
   # Logging
   logger: ^2.0.2+1
   
   # Archivos
-  file_picker: ^6.1.1
+  file_picker: ^10.2.2
   
   # UI Avanzada
   flutter_svg: ^2.0.9

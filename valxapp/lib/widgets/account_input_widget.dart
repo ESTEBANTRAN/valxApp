@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../providers/checker_provider.dart';
-import '../utils/constants.dart';
 import '../utils/theme.dart';
 
 class AccountInputWidget extends StatefulWidget {
