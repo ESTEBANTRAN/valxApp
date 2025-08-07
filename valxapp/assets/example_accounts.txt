@@ -1,0 +1,17 @@
+# Archivo de ejemplo para Valorant Checker Mobile
+# Formato: usuario:contraseña
+# Puedes agregar comentarios con #
+# Ejemplos de cuentas (reemplazar con cuentas reales)
+
+# Cuentas de ejemplo para pruebas
+testuser1:password123
+testuser2:my_password
+testuser3:secure_pass456
+
+# Más ejemplos
+demo@valorant.com:demo123
+example@test.com:example456
+sample@user.com:sample789
+
+# Nota: Este archivo es solo para demostración
+# Reemplaza con cuentas reales para usar la aplicación
