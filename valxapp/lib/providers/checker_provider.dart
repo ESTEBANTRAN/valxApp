@@ -17,48 +17,126 @@ class CheckerProvider extends ChangeNotifier {
   bool _isPaused = false;
   int _totalAccounts = 0;
   int _checkedAccounts = 0;
+
+  // Nuevas estadísticas principales (sin "error")
   int _validAccountsCount = 0;
   int _bannedAccountsCount = 0;
-  int _lockedAccountsCount = 0;
-  int _errorAccountsCount = 0;
+  int _twoFactorAccountsCount = 0;
+  int _invalidCredentialsCount = 0;
+
+  // Estadísticas en tiempo real como ValX original
+  // Regiones
+  int _euRegionCount = 0;
+  int _naRegionCount = 0;
+  int _apRegionCount = 0;
+  int _krRegionCount = 0;
+  int _latamRegionCount = 0;
+  int _brRegionCount = 0;
+
+  // Niveles
+  int _level1To10Count = 0;
+  int _level10To20Count = 0;
+  int _level20To30Count = 0;
+  int _level30To40Count = 0;
+  int _level40To50Count = 0;
+  int _level50To100Count = 0;
+  int _level100PlusCount = 0;
+  int _levelLockedCount = 0;
+
+  // Skins
+  int _noSkinsCount = 0;
+  int _skinnedCount = 0;
+  int _skins1To10Count = 0;
+  int _skins10To20Count = 0;
+  int _skins20To30Count = 0;
+  int _skins30To40Count = 0;
+  int _skins40To50Count = 0;
+  int _skins50To100Count = 0;
+  int _skins100PlusCount = 0;
 
   // Listas de cuentas
   final List<Account> _accounts = [];
   final List<Account> _validAccountsList = [];
   final List<Account> _bannedAccountsList = [];
-  final List<Account> _lockedAccountsList = [];
-  final List<Account> _errorAccountsList = [];
+  final List<Account> _twoFactorAccountsList = [];
+  final List<Account> _invalidCredentialsList = [];
 
   // Configuración
   CheckerConfig _config = const CheckerConfig();
-  ApiService? _apiService;
+  // Estadísticas detalladas
+  final Map<String, int> _regionStats = {};
+  final Map<String, int> _levelStats = {};
+  final Map<String, int> _skinStats = {};
+
+  // Proxies
+  final List<String> _proxies = [];
+
+  // API Service
+  late ApiService _apiService;
 
   // Stream controllers
   final StreamController<Account> _accountCheckedController =
       StreamController<Account>.broadcast();
   final StreamController<String> _logController =
       StreamController<String>.broadcast();
+  final StreamController<Map<String, dynamic>> _statsController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   // Getters
   bool get isRunning => _isRunning;
   bool get isPaused => _isPaused;
   int get totalAccounts => _totalAccounts;
   int get checkedAccounts => _checkedAccounts;
+
+  // Nuevos getters para estadísticas principales
   int get validAccountsCount => _validAccountsCount;
   int get bannedAccountsCount => _bannedAccountsCount;
-  int get lockedAccountsCount => _lockedAccountsCount;
-  int get errorAccountsCount => _errorAccountsCount;
+  int get twoFactorAccountsCount => _twoFactorAccountsCount;
+  int get invalidCredentialsCount => _invalidCredentialsCount;
+
+  // Getters para estadísticas en tiempo real
+  int get euRegionCount => _euRegionCount;
+  int get naRegionCount => _naRegionCount;
+  int get apRegionCount => _apRegionCount;
+  int get krRegionCount => _krRegionCount;
+  int get latamRegionCount => _latamRegionCount;
+  int get brRegionCount => _brRegionCount;
+
+  int get level1To10Count => _level1To10Count;
+  int get level10To20Count => _level10To20Count;
+  int get level20To30Count => _level20To30Count;
+  int get level30To40Count => _level30To40Count;
+  int get level40To50Count => _level40To50Count;
+  int get level50To100Count => _level50To100Count;
+  int get level100PlusCount => _level100PlusCount;
+  int get levelLockedCount => _levelLockedCount;
+
+  int get noSkinsCount => _noSkinsCount;
+  int get skinnedCount => _skinnedCount;
+  int get skins1To10Count => _skins1To10Count;
+  int get skins10To20Count => _skins10To20Count;
+  int get skins20To30Count => _skins20To30Count;
+  int get skins30To40Count => _skins30To40Count;
+  int get skins40To50Count => _skins40To50Count;
+  int get skins50To100Count => _skins50To100Count;
+  int get skins100PlusCount => _skins100PlusCount;
+
+  // Getters para estadísticas detalladas
+  Map<String, int> get regionStats => _regionStats;
+  Map<String, int> get levelStats => _levelStats;
+  Map<String, int> get skinStats => _skinStats;
 
   List<Account> get accounts => _accounts;
   List<Account> get validAccountsList => _validAccountsList;
   List<Account> get bannedAccountsList => _bannedAccountsList;
-  List<Account> get lockedAccountsList => _lockedAccountsList;
-  List<Account> get errorAccountsList => _errorAccountsList;
+  List<Account> get twoFactorAccountsList => _twoFactorAccountsList;
+  List<Account> get invalidCredentialsList => _invalidCredentialsList;
 
   CheckerConfig get config => _config;
 
   Stream<Account> get accountCheckedStream => _accountCheckedController.stream;
   Stream<String> get logStream => _logController.stream;
+  Stream<Map<String, dynamic>> get statsStream => _statsController.stream;
 
   CheckerProvider() {
     _loadConfig();
@@ -107,7 +185,7 @@ class CheckerProvider extends ChangeNotifier {
         final configMap = json.decode(configJson);
         _config = CheckerConfig.fromJson(configMap);
       }
-      _apiService = ApiService(config: _config);
+      _apiService = ApiService(_config, _proxies);
       notifyListeners();
     } catch (e) {
       _log('Error cargando configuración: $e');
@@ -127,7 +205,7 @@ class CheckerProvider extends ChangeNotifier {
   /// Actualiza la configuración
   Future<void> updateConfig(CheckerConfig newConfig) async {
     _config = newConfig;
-    _apiService = ApiService(config: _config);
+    _apiService = ApiService(_config, _proxies);
     await _saveConfig();
     notifyListeners();
   }
@@ -275,7 +353,7 @@ class CheckerProvider extends ChangeNotifier {
     if (!_isRunning || _isPaused) return;
 
     try {
-      final checkedAccount = await _apiService!.checkAccount(account);
+      final checkedAccount = await _apiService.checkAccount(account.username, account.password);
 
       _checkedAccounts++;
       _accountCheckedController.add(checkedAccount);
@@ -284,22 +362,21 @@ class CheckerProvider extends ChangeNotifier {
       _classifyAccount(checkedAccount);
 
       _log('Verificada: ${account.username} - ${checkedAccount.status}');
-      notifyListeners();
     } catch (e) {
       _checkedAccounts++;
-      _errorAccountsCount++;
 
       final errorAccount = account.copyWith(
-        status: AppConstants.statusError,
+        status: AppConstants.statusInvalidCredentials,
         errorMessage: e.toString(),
         lastChecked: DateTime.now(),
       );
 
-      _errorAccountsList.add(errorAccount);
       _accountCheckedController.add(errorAccount);
 
+      // Clasificar cuenta según su estado
+      _classifyAccount(errorAccount);
+
       _log('Error verificando ${account.username}: $e');
-      notifyListeners();
     }
   }
 
@@ -309,20 +386,148 @@ class CheckerProvider extends ChangeNotifier {
       case AppConstants.statusValid:
         _validAccountsCount++;
         _validAccountsList.add(account);
+        _updateDetailedStats(account);
         break;
       case AppConstants.statusBanned:
         _bannedAccountsCount++;
         _bannedAccountsList.add(account);
+        _updateDetailedStats(account);
+        break;
+      case AppConstants.statusTwoFactor:
+        _twoFactorAccountsCount++;
+        _twoFactorAccountsList.add(account);
+        break;
+      case AppConstants.statusInvalidCredentials:
+        _invalidCredentialsCount++;
+        _invalidCredentialsList.add(account);
         break;
       case AppConstants.statusLocked:
-        _lockedAccountsCount++;
-        _lockedAccountsList.add(account);
+        _levelLockedCount++;
         break;
       case AppConstants.statusError:
-        _errorAccountsCount++;
-        _errorAccountsList.add(account);
+        _invalidCredentialsCount++;
+        _invalidCredentialsList.add(account);
         break;
     }
+
+    // Emitir estadísticas actualizadas en tiempo real
+    _emitStatsUpdate();
+  }
+
+  /// Actualiza estadísticas detalladas en tiempo real
+  void _updateDetailedStats(Account account) {
+    // Actualizar estadísticas de región
+    if (account.region != null) {
+      switch (account.region!.toLowerCase()) {
+        case 'eu':
+          _euRegionCount++;
+          break;
+        case 'na':
+          _naRegionCount++;
+          break;
+        case 'ap':
+          _apRegionCount++;
+          break;
+        case 'kr':
+          _krRegionCount++;
+          break;
+        case 'latam':
+          _latamRegionCount++;
+          break;
+        case 'br':
+          _brRegionCount++;
+          break;
+      }
+    }
+
+    // Actualizar estadísticas de nivel
+    if (account.level != null) {
+      final level = account.level!;
+      if (level == 0) {
+        _levelLockedCount++;
+      } else if (level <= 10) {
+        _level1To10Count++;
+      } else if (level <= 20) {
+        _level10To20Count++;
+      } else if (level <= 30) {
+        _level20To30Count++;
+      } else if (level <= 40) {
+        _level30To40Count++;
+      } else if (level <= 50) {
+        _level40To50Count++;
+      } else if (level <= 100) {
+        _level50To100Count++;
+      } else {
+        _level100PlusCount++;
+      }
+    }
+
+    // Actualizar estadísticas de skins
+    if (account.hasSkins == true) {
+      _skinnedCount++;
+      final skinCount = account.skinCount ?? 0;
+      if (skinCount <= 10) {
+        _skins1To10Count++;
+      } else if (skinCount <= 20) {
+        _skins10To20Count++;
+      } else if (skinCount <= 30) {
+        _skins20To30Count++;
+      } else if (skinCount <= 40) {
+        _skins30To40Count++;
+      } else if (skinCount <= 50) {
+        _skins40To50Count++;
+      } else if (skinCount <= 100) {
+        _skins50To100Count++;
+      } else {
+        _skins100PlusCount++;
+      }
+    } else {
+      _noSkinsCount++;
+    }
+  }
+
+  /// Emite actualización de estadísticas en tiempo real
+  void _emitStatsUpdate() {
+    final stats = {
+      'validAccounts': _validAccountsCount,
+      'bannedAccounts': _bannedAccountsCount,
+      'twoFactorAccounts': _twoFactorAccountsCount,
+      'invalidCredentials': _invalidCredentialsCount,
+
+      // Regiones
+      'euRegion': _euRegionCount,
+      'naRegion': _naRegionCount,
+      'apRegion': _apRegionCount,
+      'krRegion': _krRegionCount,
+      'latamRegion': _latamRegionCount,
+      'brRegion': _brRegionCount,
+
+      // Niveles
+      'level1To10': _level1To10Count,
+      'level10To20': _level10To20Count,
+      'level20To30': _level20To30Count,
+      'level30To40': _level30To40Count,
+      'level40To50': _level40To50Count,
+      'level50To100': _level50To100Count,
+      'level100Plus': _level100PlusCount,
+      'levelLocked': _levelLockedCount,
+
+      // Skins
+      'noSkins': _noSkinsCount,
+      'skinned': _skinnedCount,
+      'skins1To10': _skins1To10Count,
+      'skins10To20': _skins10To20Count,
+      'skins20To30': _skins20To30Count,
+      'skins30To40': _skins30To40Count,
+      'skins40To50': _skins40To50Count,
+      'skins50To100': _skins50To100Count,
+      'skins100Plus': _skins100PlusCount,
+
+      'totalAccounts': _totalAccounts,
+      'checkedAccounts': _checkedAccounts,
+    };
+
+    _statsController.add(stats);
   }
 
   /// Crea lotes de cuentas
@@ -342,13 +547,42 @@ class CheckerProvider extends ChangeNotifier {
     _checkedAccounts = 0;
     _validAccountsCount = 0;
     _bannedAccountsCount = 0;
-    _lockedAccountsCount = 0;
-    _errorAccountsCount = 0;
+    _twoFactorAccountsCount = 0;
+    _invalidCredentialsCount = 0;
+
+    // Reiniciar estadísticas de regiones
+    _euRegionCount = 0;
+    _naRegionCount = 0;
+    _apRegionCount = 0;
+    _krRegionCount = 0;
+    _latamRegionCount = 0;
+    _brRegionCount = 0;
+
+    // Reiniciar estadísticas de niveles
+    _level1To10Count = 0;
+    _level10To20Count = 0;
+    _level20To30Count = 0;
+    _level30To40Count = 0;
+    _level40To50Count = 0;
+    _level50To100Count = 0;
+    _level100PlusCount = 0;
+    _levelLockedCount = 0;
+
+    // Reiniciar estadísticas de skins
+    _noSkinsCount = 0;
+    _skinnedCount = 0;
+    _skins1To10Count = 0;
+    _skins10To20Count = 0;
+    _skins20To30Count = 0;
+    _skins30To40Count = 0;
+    _skins40To50Count = 0;
+    _skins50To100Count = 0;
+    _skins100PlusCount = 0;
 
     _validAccountsList.clear();
     _bannedAccountsList.clear();
-    _lockedAccountsList.clear();
-    _errorAccountsList.clear();
+    _twoFactorAccountsList.clear();
+    _invalidCredentialsList.clear();
   }
 
   /// Guarda los resultados
@@ -369,16 +603,18 @@ class CheckerProvider extends ChangeNotifier {
         'checkedAccounts': _checkedAccounts,
         'validAccounts': _validAccountsCount,
         'bannedAccounts': _bannedAccountsCount,
-        'lockedAccounts': _lockedAccountsCount,
-        'errorAccounts': _errorAccountsCount,
+        'twoFactorAccounts': _twoFactorAccountsCount,
+        'invalidCredentials': _invalidCredentialsCount,
         'validAccountsList': _validAccountsList.map((a) => a.toJson()).toList(),
         'bannedAccountsList': _bannedAccountsList
             .map((a) => a.toJson())
             .toList(),
-        'lockedAccountsList': _lockedAccountsList
+        'twoFactorAccountsList': _twoFactorAccountsList
             .map((a) => a.toJson())
             .toList(),
-        'errorAccountsList': _errorAccountsList.map((a) => a.toJson()).toList(),
+        'invalidCredentialsList': _invalidCredentialsList
+            .map((a) => a.toJson())
+            .toList(),
       };
 
       await resultsFile.writeAsString(json.encode(results));
@@ -399,13 +635,14 @@ class CheckerProvider extends ChangeNotifier {
 
   /// Limpia el caché
   void clearCache() {
-    _apiService?.clearCache();
+    // El nuevo API service no tiene caché, pero mantenemos el método por compatibilidad
     _log('Caché limpiado');
   }
 
   /// Obtiene estadísticas del caché
   Map<String, dynamic> getCacheStats() {
-    return _apiService?.getCacheStats() ?? {'size': 0, 'maxSize': 0};
+    // El nuevo API service no tiene caché, pero mantenemos el método por compatibilidad
+    return {'size': 0, 'maxSize': 0};
   }
 
   /// Agrega un mensaje al log
@@ -422,6 +659,7 @@ class CheckerProvider extends ChangeNotifier {
   void dispose() {
     _accountCheckedController.close();
     _logController.close();
+    _statsController.close();
     super.dispose();
   }
 }

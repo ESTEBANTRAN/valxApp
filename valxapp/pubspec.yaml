@@ -15,6 +15,10 @@ dependencies:
   dio: ^5.3.2
   connectivity_plus: ^5.0.2
   
+  # WebView para login manual
+  webview_flutter: ^4.4.2
+  url_launcher: ^6.2.2
+  
   # Estado y Gestión de Datos
   provider: ^6.1.1
   riverpod: ^2.4.9

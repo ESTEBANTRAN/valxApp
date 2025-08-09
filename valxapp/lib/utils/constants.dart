@@ -47,6 +47,8 @@ class AppConstants {
   static const String statusBanned = 'banned';
   static const String statusLocked = 'locked';
   static const String statusError = 'error';
+  static const String statusTwoFactor = 'twoFactor';
+  static const String statusInvalidCredentials = 'invalidCredentials';
 
   // Mensajes de error
   static const Map<String, String> errorMessages = {

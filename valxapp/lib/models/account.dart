@@ -5,6 +5,7 @@ class Account {
   final String? region;
   final int? level;
   final bool? hasSkins;
+  final int? skinCount;
   final bool? isBanned;
   final bool? isLocked;
   final String? errorMessage;
@@ -18,6 +19,7 @@ class Account {
     this.region,
     this.level,
     this.hasSkins,
+    this.skinCount,
     this.isBanned,
     this.isLocked,
     this.errorMessage,
@@ -33,6 +35,7 @@ class Account {
       region: json['region'],
       level: json['level'],
       hasSkins: json['hasSkins'],
+      skinCount: json['skinCount'],
       isBanned: json['isBanned'],
       isLocked: json['isLocked'],
       errorMessage: json['errorMessage'],
@@ -51,6 +54,7 @@ class Account {
       'region': region,
       'level': level,
       'hasSkins': hasSkins,
+      'skinCount': skinCount,
       'isBanned': isBanned,
       'isLocked': isLocked,
       'errorMessage': errorMessage,
@@ -66,6 +70,7 @@ class Account {
     String? region,
     int? level,
     bool? hasSkins,
+    int? skinCount,
     bool? isBanned,
     bool? isLocked,
     String? errorMessage,
@@ -79,6 +84,7 @@ class Account {
       region: region ?? this.region,
       level: level ?? this.level,
       hasSkins: hasSkins ?? this.hasSkins,
+      skinCount: skinCount ?? this.skinCount,
       isBanned: isBanned ?? this.isBanned,
       isLocked: isLocked ?? this.isLocked,
       errorMessage: errorMessage ?? this.errorMessage,

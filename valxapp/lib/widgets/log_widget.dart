@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/checker_provider.dart';
 import '../utils/theme.dart';
+import 'dart:async';
 
 class LogWidget extends StatefulWidget {
   const LogWidget({super.key});
@@ -14,26 +15,29 @@ class _LogWidgetState extends State<LogWidget> {
   final List<String> _logMessages = [];
   final ScrollController _scrollController = ScrollController();
   bool _autoScroll = true;
+  StreamSubscription<String>? _logSubscription;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final provider = context.read<CheckerProvider>();
-      provider.logStream.listen((message) {
-        setState(() {
-          _logMessages.add(message);
-          if (_logMessages.length > 1000) {
-            _logMessages.removeAt(0);
-          }
-        });
+      _logSubscription = provider.logStream.listen((message) {
+        if (mounted) {
+          setState(() {
+            _logMessages.add(message);
+            if (_logMessages.length > 1000) {
+              _logMessages.removeAt(0);
+            }
+          });
 
-        if (_autoScroll && _scrollController.hasClients) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent,
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
+          if (_autoScroll && _scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
         }
       });
     });
@@ -41,6 +45,7 @@ class _LogWidgetState extends State<LogWidget> {
 
   @override
   void dispose() {
+    _logSubscription?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -103,7 +108,9 @@ class _LogWidgetState extends State<LogWidget> {
                       Icon(
                         Icons.list_alt,
                         size: 64,
-                        color: AppTheme.textSecondaryColor.withValues(alpha: 0.5),
+                        color: AppTheme.textSecondaryColor.withValues(
+                          alpha: 0.5,
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -192,7 +199,10 @@ class _LogMessage extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: messageColor.withValues(alpha: 0.3), width: 1),
+        border: Border.all(
+          color: messageColor.withValues(alpha: 0.3),
+          width: 1,
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

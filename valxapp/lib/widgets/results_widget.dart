@@ -93,16 +93,16 @@ class _AccountsList extends StatelessWidget {
             icon = Icons.block;
             break;
           case 'locked':
-            accounts = provider.lockedAccountsList;
-            title = 'Cuentas Bloqueadas';
+            accounts = provider.twoFactorAccountsList;
+            title = 'Cuentas con 2FA';
             color = AppTheme.warningColor;
-            icon = Icons.lock;
+            icon = Icons.security;
             break;
           case 'error':
-            accounts = provider.errorAccountsList;
-            title = 'Cuentas con Error';
+            accounts = provider.invalidCredentialsList;
+            title = 'Credenciales Inválidas';
             color = AppTheme.textSecondaryColor;
-            icon = Icons.error;
+            icon = Icons.person_off;
             break;
           default:
             accounts = [];
