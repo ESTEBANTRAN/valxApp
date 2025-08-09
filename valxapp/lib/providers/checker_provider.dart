@@ -7,6 +7,8 @@ import 'package:path_provider/path_provider.dart';
 import '../models/account.dart';
 import '../models/checker_config.dart';
 import '../services/api_service.dart';
+import '../services/proxy_service.dart';
+import '../services/proxy_provider.dart';
 import '../utils/constants.dart';
 
 class CheckerProvider extends ChangeNotifier {
@@ -60,6 +62,40 @@ class CheckerProvider extends ChangeNotifier {
 
   CheckerProvider() {
     _loadConfig();
+    _initializeProxies();
+  }
+
+  /// Inicializa el sistema de proxies
+  void _initializeProxies() async {
+    try {
+      _log('Inicializando sistema de proxies...');
+
+      // Configurar proxies automáticamente (descarga de proveedores)
+      await ProxyProvider.setupProxiesAutomatically();
+
+      final stats = ProxyService.getProxyStats();
+      _log(
+        'Proxies inicializados: ${stats['validated']}/${stats['total']} válidos (${stats['success_rate'].toStringAsFixed(1)}%)',
+      );
+
+      if (stats['validated'] == 0) {
+        _log('⚠️ No se encontraron proxies válidos, usando conexión directa');
+      }
+    } catch (e) {
+      _log('Error inicializando proxies: $e');
+      _log('🔄 Intentando configuración de respaldo...');
+
+      try {
+        // Fallback: proxies de alta calidad simulados
+        await ProxyProvider.setupHighQualityProxies();
+        final stats = ProxyService.getProxyStats();
+        _log(
+          'Proxies de respaldo: ${stats['validated']}/${stats['total']} válidos',
+        );
+      } catch (fallbackError) {
+        _log('Error en configuración de respaldo: $fallbackError');
+      }
+    }
   }
 
   /// Carga la configuración desde SharedPreferences
@@ -336,8 +372,12 @@ class CheckerProvider extends ChangeNotifier {
         'lockedAccounts': _lockedAccountsCount,
         'errorAccounts': _errorAccountsCount,
         'validAccountsList': _validAccountsList.map((a) => a.toJson()).toList(),
-        'bannedAccountsList': _bannedAccountsList.map((a) => a.toJson()).toList(),
-        'lockedAccountsList': _lockedAccountsList.map((a) => a.toJson()).toList(),
+        'bannedAccountsList': _bannedAccountsList
+            .map((a) => a.toJson())
+            .toList(),
+        'lockedAccountsList': _lockedAccountsList
+            .map((a) => a.toJson())
+            .toList(),
         'errorAccountsList': _errorAccountsList.map((a) => a.toJson()).toList(),
       };
 

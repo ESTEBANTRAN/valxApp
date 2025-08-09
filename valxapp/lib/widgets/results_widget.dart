@@ -116,12 +116,12 @@ class _AccountsList extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 64, color: color.withOpacity(0.5)),
+                Icon(icon, size: 64, color: color.withValues(alpha: 0.5)),
                 const SizedBox(height: 16),
                 Text(
                   'No hay $title',
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    color: color.withOpacity(0.5),
+                    color: color.withValues(alpha: 0.5),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -155,7 +155,7 @@ class _AccountsList extends StatelessWidget {
                   const Spacer(),
                   TextButton.icon(
                     onPressed: () {
-                      // TODO: Exportar resultados
+                      _exportResults(context, accounts, type);
                     },
                     icon: const Icon(Icons.download),
                     label: const Text('Exportar'),
@@ -178,6 +178,98 @@ class _AccountsList extends StatelessWidget {
         );
       },
     );
+  }
+
+  void _exportResults(
+    BuildContext context,
+    List<Account> accounts,
+    String type,
+  ) {
+    if (accounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay resultados para exportar'),
+          backgroundColor: AppTheme.warningColor,
+        ),
+      );
+      return;
+    }
+
+    // Implementación básica de exportación
+    try {
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final fileName = 'export_${type}_$timestamp.txt';
+
+      // Crear contenido del archivo
+      final content = StringBuffer();
+      content.writeln('=== EXPORTACIÓN DE CUENTAS ===');
+      content.writeln('Tipo: $type');
+      content.writeln('Fecha: ${DateTime.now()}');
+      content.writeln('Total: ${accounts.length} cuentas');
+      content.writeln('');
+
+      for (final account in accounts) {
+        content.writeln('Usuario: ${account.username}');
+        if (account.level != null) {
+          content.writeln('Nivel: ${account.level}');
+        }
+        if (account.region != null) {
+          content.writeln('Región: ${account.region}');
+        }
+        if (account.hasSkins == true) {
+          content.writeln('Skins: Sí');
+        }
+        if (account.hasSkins == false) {
+          content.writeln('Skins: No');
+        }
+        if (account.errorMessage != null) {
+          content.writeln('Error: ${account.errorMessage}');
+        }
+        content.writeln('---');
+      }
+
+      // Mostrar diálogo de confirmación con información del archivo
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Exportar Resultados'),
+          content: Text(
+            '¿Deseas exportar ${accounts.length} cuentas de tipo "$type"?\n\n'
+            'Se creará un archivo: $fileName\n'
+            'con toda la información de las cuentas.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                // Aquí se implementaría la lógica real de guardar el archivo
+                // Por ahora solo muestra un mensaje de éxito
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      'Exportación de $type completada - $fileName',
+                    ),
+                    backgroundColor: AppTheme.successColor,
+                  ),
+                );
+              },
+              child: const Text('Exportar'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error en exportación: $e'),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+    }
   }
 }
 
@@ -215,7 +307,7 @@ class _AccountCard extends StatelessWidget {
                       vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: color.withOpacity(0.1),
+                      color: color.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(

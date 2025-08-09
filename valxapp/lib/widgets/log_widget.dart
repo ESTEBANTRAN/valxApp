@@ -56,12 +56,16 @@ class _LogWidgetState extends State<LogWidget> {
             children: [
               Icon(Icons.list_alt, color: AppTheme.accentColor, size: 24),
               const SizedBox(width: 8),
-              Text(
-                'Log de Actividad',
-                style: Theme.of(context).textTheme.headlineSmall,
+              Expanded(
+                child: Text(
+                  'Log de Actividad',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
-              const Spacer(),
+              const SizedBox(width: 8),
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Switch(
                     value: _autoScroll,
@@ -79,7 +83,7 @@ class _LogWidgetState extends State<LogWidget> {
                   ),
                 ],
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 8),
               TextButton.icon(
                 onPressed: _logMessages.isNotEmpty ? _clearLog : null,
                 icon: const Icon(Icons.clear),
@@ -99,15 +103,15 @@ class _LogWidgetState extends State<LogWidget> {
                       Icon(
                         Icons.list_alt,
                         size: 64,
-                        color: AppTheme.textSecondaryColor.withOpacity(0.5),
+                        color: AppTheme.textSecondaryColor.withValues(alpha: 0.5),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'No hay mensajes de log',
                         style: Theme.of(context).textTheme.headlineSmall
                             ?.copyWith(
-                              color: AppTheme.textSecondaryColor.withOpacity(
-                                0.5,
+                              color: AppTheme.textSecondaryColor.withValues(
+                                alpha: 0.5,
                               ),
                             ),
                       ),
@@ -188,7 +192,7 @@ class _LogMessage extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.surfaceColor,
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: messageColor.withOpacity(0.3), width: 1),
+        border: Border.all(color: messageColor.withValues(alpha: 0.3), width: 1),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

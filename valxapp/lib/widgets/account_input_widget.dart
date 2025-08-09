@@ -112,16 +112,17 @@ class _AccountInputWidgetState extends State<AccountInputWidget> {
     try {
       setState(() => _isLoading = true);
 
+      // Capture provider before any async operations
+      final provider = context.read<CheckerProvider>();
+
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['txt'],
-        allowMultiple: false,
       );
 
       if (result != null && result.files.isNotEmpty) {
         final file = result.files.first;
         if (file.path != null) {
-          final provider = context.read<CheckerProvider>();
           await provider.loadAccountsFromFile(file.path!);
 
           if (mounted) {
@@ -155,7 +156,7 @@ class _AccountInputWidgetState extends State<AccountInputWidget> {
 
     return showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Pegar Cuentas'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -177,13 +178,13 @@ class _AccountInputWidgetState extends State<AccountInputWidget> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () => Navigator.of(dialogContext).pop(),
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
             onPressed: () async {
               if (textController.text.trim().isNotEmpty) {
-                Navigator.of(context).pop();
+                Navigator.of(dialogContext).pop();
 
                 try {
                   setState(() => _isLoading = true);

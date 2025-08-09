@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/checker_provider.dart';
 import '../utils/theme.dart';
+import '../screens/settings_screen.dart';
 
 class CheckerControlsWidget extends StatelessWidget {
   const CheckerControlsWidget({super.key});
@@ -88,7 +89,11 @@ class CheckerControlsWidget extends StatelessWidget {
                         Expanded(
                           child: OutlinedButton.icon(
                             onPressed: () {
-                              // TODO: Mostrar configuración
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (context) => const SettingsScreen(),
+                                ),
+                              );
                             },
                             icon: const Icon(Icons.settings),
                             label: const Text('Config'),
